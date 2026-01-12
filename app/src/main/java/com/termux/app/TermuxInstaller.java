@@ -4,6 +4,7 @@ import android.app.Activity;
 import android.app.AlertDialog;
 import android.app.ProgressDialog;
 import android.content.Context;
+import android.content.res.AssetManager;
 import android.os.Build;
 import android.os.Environment;
 import android.system.Os;
@@ -27,7 +28,9 @@ import java.io.BufferedReader;
 import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.FileOutputStream;
+import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.zip.ZipEntry;
@@ -221,6 +224,9 @@ final class TermuxInstaller {
                     // Recreate env file since termux prefix was wiped earlier
                     TermuxShellEnvironment.writeEnvironmentToFile(activity);
 
+                    // Copy default .bashrc if it doesn't exist
+                    copyDefaultBashrcIfNeeded(activity);
+
                     activity.runOnUiThread(whenDone);
 
                 } catch (final Exception e) {
@@ -373,6 +379,70 @@ final class TermuxInstaller {
 
     private static Error ensureDirectoryExists(File directory) {
         return FileUtils.createDirectoryFile(directory.getAbsolutePath());
+    }
+
+    /**
+     * Copy default .bashrc from assets to user's home directory if it doesn't already exist.
+     * This provides a custom menu interface for the user on first launch.
+     *
+     * @param context The context to access assets and file system
+     */
+    static void copyDefaultBashrcIfNeeded(final Context context) {
+        try {
+            // Define the target .bashrc file in the user's home directory
+            File bashrcFile = new File(TermuxConstants.TERMUX_HOME_DIR_PATH, ".bashrc");
+
+            // Only copy if .bashrc doesn't already exist
+            if (bashrcFile.exists()) {
+                Logger.logInfo(LOG_TAG, ".bashrc already exists at \"" + bashrcFile.getAbsolutePath() + "\", skipping copy.");
+                return;
+            }
+
+            Logger.logInfo(LOG_TAG, "Copying default .bashrc from assets to \"" + bashrcFile.getAbsolutePath() + "\".");
+
+            // Get the asset manager and open the bashrc file from assets
+            AssetManager assetManager = context.getAssets();
+            InputStream inputStream = null;
+            FileOutputStream outputStream = null;
+
+            try {
+                inputStream = assetManager.open("bashrc");
+                outputStream = new FileOutputStream(bashrcFile);
+
+                // Copy the file content
+                byte[] buffer = new byte[8096];
+                int length;
+                while ((length = inputStream.read(buffer)) > 0) {
+                    outputStream.write(buffer, 0, length);
+                }
+
+                // Set appropriate permissions (owner read and write: 0600)
+                //noinspection OctalInteger
+                Os.chmod(bashrcFile.getAbsolutePath(), 0600);
+
+                Logger.logInfo(LOG_TAG, "Default .bashrc copied successfully.");
+
+            } finally {
+                if (inputStream != null) {
+                    try {
+                        inputStream.close();
+                    } catch (IOException e) {
+                        // Ignore close exceptions
+                    }
+                }
+                if (outputStream != null) {
+                    try {
+                        outputStream.close();
+                    } catch (IOException e) {
+                        // Ignore close exceptions
+                    }
+                }
+            }
+
+        } catch (Exception e) {
+            // Log the error but don't fail the bootstrap process
+            Logger.logStackTraceWithMessage(LOG_TAG, "Failed to copy default .bashrc: " + e.getMessage(), e);
+        }
     }
 
     public static byte[] loadZipBytes() {
